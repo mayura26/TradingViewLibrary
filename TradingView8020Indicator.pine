@@ -1,0 +1,200 @@
+//@version=5
+// TODO: Line type changes for weak structure?
+// TODO: ADd 1min range of candle
+// TODO: Add trend day indicator
+indicator("80/20", overlay=true, max_bars_back=1000, max_labels_count = 500, max_lines_count = 500)
+coreLevels = input("20-80", title="Core Numbers", group="Level Numbers", tooltip="Enter the core numbers separated by a hyphen")
+secondaryLevels = input("33.5-46-66-93-3.5-53", title="Secondary Numbers", group="Level Numbers", tooltip="Enter the secondary numbers separated by a hyphen")
+labelOffset = input(10, title="Label Offset", group="Level Numbers", tooltip="Enter the offset for the label (TradingView sometimes mvoes this around as you zoom in/out)")
+priceLowerOffset = input(100, title="Price Lower Offset", group="Level Numbers", tooltip="Lower start price for drawing. Must be rounded to 100. You always get the main 100")
+priceUpperOffset = input(100, title="Price Upper Offset", group="Level Numbers", tooltip="Upper start price for drawing levels. Must be rounded to 100. You always get the main 100")
+
+coreColor = input.color(color.fuchsia, title="Main Levels Color", group="Main Level Settings", inline = "core")
+coreLabel = input("[Main]", title="Main Levels Label", group="Main Level Settings", inline = "core", tooltip="Label appended to level. Set to dash to remove number as well")
+coreWidth = input(2, title="    └ Main Levels Width", group="Main Level Settings", inline = "cwidth")
+coreStyle = input.string("solid", title="Main Levels Style", options=["solid", "dotted", "dashed"], group="Main Level Settings")
+
+secondaryColor = input.color(color.aqua, title="Extra Levels Color", group="Extra Level Settings", inline = "secondary")
+secondaryLabel = input("[Extra]", title="Extra Levels Label", group="Extra Level Settings", inline = "secondary", tooltip="Label appended to level. Set to dash to remove number as well")
+secondaryWidth = input(1, title="    └ Extra Levels Width", group="Extra Level Settings", inline = "swidth")
+secondaryStyle = input.string("dotted", title="Extra Levels Style", options=["solid", "dotted", "dashed"], group="Extra Level Settings")
+
+badStructureTF = input.string("10m", title="Bad Structure Timeframe", options=["3m", "5m", "10m", "15m"],  group="Bad Structure", tooltip="Timeframe to check for bad structure")
+badStructureLookbackTime = input.int(720, title="Bad Structure Lookback Time [min]", group="Bad Structure", tooltip="Lookback time for bad structure")
+badStructureWickTolerance = input(0.25, title="Bad Structure Wick Tolerance", group="Bad Structure", tooltip="Tolerance for wick to be considered bad structure")
+
+badStructureColor = input.color(color.red, title="Bad Structure Color", group="Bad Structure")
+badStructureLabel = input("Repair", title="Bad Structure Label", group="Bad Structure", inline = "secondary", tooltip="Label appended to level. Set to dash to remove number as well")
+badStructureWidth = input(2, title="    └ Bad Structure Width", group="Bad Structure", inline = "swidth")
+badStructureStyle = input.string("solid", title="Bad Structure Style", options=["solid", "dotted", "dashed"], group="Bad Structure")
+weakStructureColor = input.color(color.orange, title="Weak Structure Color", group="Weak Structure")
+weakStructureLabel = input("Weak", title="Weak Structure Label", group="Weak Structure", inline = "secondary", tooltip="Label appended to level. Set to dash to remove number as well")
+weakStructureWidth = input(1, title="    └ Weak Structure Width", group="Weak Structure", inline = "swidth")
+weakStructureStyle = input.string("dotted", title="Weak Structure Style", options=["solid", "dotted", "dashed"], group="Weak Structure")
+
+var line [] lineArray = array.new_line()
+var label [] labelArray = array.new_label()
+for line in lineArray
+    line.delete(line)
+for label in labelArray
+    label.delete(label)
+array.clear(lineArray)    
+array.clear(labelArray)
+
+var float[] badStructureLevels = array.new_float()
+var int[] badStructureIndices = array.new_int()
+var bool[] weakStructure = array.new_bool()
+
+draw_line(_x1, _y1, _x2, _y2, _xloc, _extend, _color, _style, _width) =>
+    dline = line.new(x1=_x1, y1=_y1, x2=_x2, y2=_y2, xloc=_xloc, extend=_extend, color=_color, style=_style, width=_width)
+    array.push(lineArray,dline)
+
+draw_level(level, color, width, label, labeloffset, linestyle) =>
+    if barstate.islast
+        lineStyle = linestyle == "solid" ? line.style_solid : linestyle == "dotted" ? line.style_dotted : line.style_dashed
+        draw_line(bar_index, level, bar_index + labeloffset + 15, level,  xloc.bar_index, extend.left, color, lineStyle, width)
+        plot_label = label.new(bar_index + labeloffset + 10, level)
+        label.set_text(plot_label, label)
+        label.set_style(plot_label, label.style_none)
+        label.set_textcolor(plot_label, color)
+        label.set_textalign(plot_label, text.align_right)
+        array.push(labelArray, plot_label)
+
+draw_level_bs(level, index, label) =>
+    if barstate.islast
+        lineStyle = badStructureStyle == "solid" ? line.style_solid : badStructureStyle == "dotted" ? line.style_dotted : line.style_dashed
+        draw_line(bar_index - index, level, bar_index + labelOffset + 15, level,  xloc.bar_index, extend.none, badStructureColor, lineStyle, badStructureWidth)
+        plot_label = label.new(bar_index + labelOffset + 10, level)
+        label.set_text(plot_label, label)
+        label.set_style(plot_label, label.style_none)
+        label.set_textcolor(plot_label, badStructureColor)
+        label.set_textalign(plot_label, text.align_right)
+        array.push(labelArray, plot_label)
+
+draw_level_ws(level, index, label) =>
+    if barstate.islast
+        lineStyle = weakStructureStyle == "solid" ? line.style_solid : weakStructureStyle == "dotted" ? line.style_dotted : line.style_dashed
+        draw_line(bar_index - index, level, bar_index + labelOffset + 15, level,  xloc.bar_index, extend.none, weakStructureColor, lineStyle, weakStructureWidth)
+        plot_label = label.new(bar_index + labelOffset + 10, level)
+        label.set_text(plot_label, label)
+        label.set_style(plot_label, label.style_none)
+        label.set_textcolor(plot_label, weakStructureColor)
+
+// Function to convert timeframe to minutes
+getTimeframeInMinutes() =>
+    // Initialize variable for minutes
+    var float minutes = na
+    // Check if timeframe is in minutes, hours, or days and convert accordingly
+    if str.contains(timeframe.period, "D")
+        minutes := str.tonumber(str.replace(timeframe.period, "D", "")) * 1440
+    else if str.contains(timeframe.period, "H")
+        minutes := str.tonumber(str.replace(timeframe.period, "H", "")) * 60
+    else if str.contains(timeframe.period, "M")
+        minutes := str.tonumber(str.replace(timeframe.period, "M", ""))
+    else
+        // Assuming direct minute timeframes like "15", "5", etc.
+        minutes := str.tonumber(timeframe.period)
+    // Return calculated minutes
+    minutes
+
+// Function to check for bad structure (no upper or lower wick)
+isBadStructure(barO, barH, barL, barC) =>
+    var float badStruct = 0.0
+
+    if barO < barC  // Bullish candle
+        if barO - barL <= badStructureWickTolerance
+            badStruct := barO  // Use the low as the bad structure level
+    else  // Bearish candle
+        if barH - barO <= badStructureWickTolerance
+            badStruct := barO  // Use the high as the bad structure level
+
+    badStruct
+
+clearBrokenStructure(barH, barL) =>
+    var int[] indicesToRemove = array.new_int()
+    array.clear(indicesToRemove)
+
+    if array.size(badStructureLevels) > 0
+        for i = 0 to array.size(badStructureLevels) - 1
+            level = array.get(badStructureLevels, i)
+            if level <= barH and level >= barL
+                array.push(indicesToRemove, i)
+
+    if array.size(indicesToRemove) > 0
+        for i = array.size(indicesToRemove) - 1 to 0
+            indexToRemove = array.get(indicesToRemove, i)
+            array.remove(badStructureLevels, indexToRemove)
+            array.remove(badStructureIndices, indexToRemove)
+            array.remove(weakStructure, indexToRemove)
+
+levelExists(level) =>
+    tolerence = 1.0
+    exists = false
+    for bsLevel in badStructureLevels
+        if math.abs(bsLevel - level) <= tolerence
+            exists := true
+            break
+    exists
+
+startPrice = math.round(close/100,0)*100 - priceLowerOffset
+endPrice = startPrice + priceUpperOffset
+
+coreNumbers = str.split(coreLevels, "-")
+secondaryNumbers = str.split(secondaryLevels, "-")
+
+for coreNum in coreNumbers
+    for price = startPrice to endPrice by 100
+        labelText = coreLabel == "-" ? "" : coreNum + coreLabel
+        draw_level(str.tonumber(coreNum) + price, coreColor, 1, labelText, labelOffset, coreStyle)
+
+for secondaryNum in secondaryNumbers
+    for price = startPrice to endPrice by 100
+        labelText = secondaryLabel == "-" ? "" : secondaryNum + secondaryLabel
+        draw_level(str.tonumber(secondaryNum) + price, secondaryColor, 1, labelText, labelOffset, secondaryStyle)
+
+// Bad structure
+// Get chart TF and check if its same as badStructureTF
+// If yes, check for bad structure
+// If no, do nothing
+chartTF = str.tostring(getTimeframeInMinutes()) + "m"
+badStructLookbackBars = math.floor(badStructureLookbackTime/getTimeframeInMinutes())
+[curO, curC, curH, curL] = request.security(syminfo.tickerid, '', [open, close, high, low])
+
+// Check if chart TF is same as bad structure TF
+if chartTF == badStructureTF
+    if barstate.isconfirmed
+        array.clear(badStructureLevels)
+        array.clear(badStructureIndices)
+        array.clear(weakStructure)
+        // Check for bad structure
+        // Loop to check each bar in the lookback period, excluding the current bar
+
+        for i = 1 to badStructLookbackBars 
+            j = badStructLookbackBars - i
+            
+            clearBrokenStructure(curH[j], curL[j])
+
+            badStructure = isBadStructure(curO[j], curH[j], curL[j], curC[j])
+            if badStructure > 0 and not array.includes(badStructureLevels, badStructure)
+                if curO[j] == badStructure
+                    array.push(badStructureLevels, badStructure)
+                    array.push(badStructureIndices, j + 1)
+                    strongStruct = (curH[j] == badStructure or curL[j] == badStructure)
+                    array.push(weakStructure, not(strongStruct))
+                    //log.info("Bad Structure Detected - Level=" + str.tostring(badStructure) +  " Bar=" + str.tostring(j + 1) + ": Open=" + str.tostring(curO[j]) + ", High=" + str.tostring(curH[j]) + ", Low=" + str.tostring(curL[j]) + ", Close=" + str.tostring(curC[j]))
+
+        // Debug log for bad structure levels and indices
+        //if array.size(badStructureLevels) > 0
+         //   for k = 0 to array.size(badStructureLevels) - 1
+        //        level = array.get(badStructureLevels, k)
+         //       index = array.get(badStructureIndices, k)
+          //      log.info("Bar: " + str.tostring(bar_index - index) + ", Level: " + str.tostring(level))
+
+    for level in badStructureLevels 
+        index = array.get(badStructureIndices, array.indexof(badStructureLevels, level))
+        if array.get(weakStructure, array.indexof(badStructureLevels, level))
+            labelText = weakStructureLabel == "-" ? "" : weakStructureLabel + "(" + str.tostring(level) + ")"
+            draw_level_ws(level, index, labelText)
+        else
+            labelText = badStructureLabel == "-" ? "" : badStructureLabel + "(" + str.tostring(level) + ")"
+            draw_level_bs(level, index, labelText)

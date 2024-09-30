@@ -1,0 +1,40 @@
+//@version=5
+// Author is not responsible for your trading using this script.
+// Data provided in this script is not financial advice.
+// Based on my own ideas and ideas from Saty ATR Levels, posty's pivots, @midtownsk8rguy and other scripts.
+
+// ********** BASE SETUP **********
+strategy("Trading Levels Strategy", max_labels_count = 500, max_lines_count = 500, overlay=true, initial_capital = 50000, calc_on_every_tick = true, default_qty_value = 5, pyramiding = 0, commission_value = 0.35, commission_type = strategy.commission.cash_per_contract)
+
+// ***** INSERT CODE ********
+
+// Note: Pine Script uses milliseconds for timestamps
+var int startOfLastWeek = timestamp(year(timenow), month(timenow), dayofmonth(timenow) - 7, 00, 00) // Adjust the hour and minute as needed
+var int endOfLastWeek = timenow // Current time represents the end of the period
+
+// Check if the current bar is within the last week
+inLastWeek = time >= startOfLastWeek and time <= endOfLastWeek
+
+if buyVolTrigger and not buyVolTrigger[1] and allowedTimes() and inLastWeek
+    limitLevel := getLimitLevel(smoothConfirmMA + priceOptimalBufferEntry, close, true)
+    strategy.entry("buy", strategy.long, limit = limitLevel)
+    strategy.exit("buy exit","buy", qty_percent = 100, loss = slLevel)
+
+if (buyVolCloseTrigger or not allowedTimes()) and strategy.position_size > 0
+    strategy.close("buy")
+
+if sellVolTrigger and not sellVolTrigger[1] and allowedTimes() and inLastWeek
+    limitLevel := getLimitLevel(smoothConfirmMA - priceOptimalBufferEntry, close, false)
+    strategy.entry("sell", strategy.short, limit = limitLevel)
+    strategy.exit("sell exit","sell", qty_percent = 100, loss = slLevel)
+
+if (sellVolCloseTrigger or not allowedTimes()) and strategy.position_size < 0
+    strategy.close("sell")
+
+stopLossLong = limitLevel - SL
+stopLossShort = limitLevel + SL
+
+plot(limitLevel, "Entry", strategy.position_size > 0 ? color.rgb(0, 212, 64) :  strategy.position_size < 0 ? color.rgb(212, 0, 0) : na, style = plot.style_linebr, linewidth = 2)
+plot(stopLossLong, "SL Long", strategy.position_size > 0 ? color.rgb(0, 212, 64, 26) : na, style = plot.style_circles)
+plot(stopLossShort, "SL Short", strategy.position_size < 0 ? color.rgb(212, 0, 0, 26) : na, style = plot.style_circles)
+
